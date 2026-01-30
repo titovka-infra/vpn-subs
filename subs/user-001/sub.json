@@ -1,0 +1,12 @@
+{
+  "name": "Transconvey VPN — user-001",
+  "description": "Subscription for user-001",
+  "updated": "2026-01-30",
+  "servers": [
+    {
+      "name": "EDGE-1",
+      "address": "edge1.titovka.com",
+      "port": 443
+    }
+  ]
+}
