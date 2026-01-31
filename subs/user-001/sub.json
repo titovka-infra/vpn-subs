@@ -1,26 +1,6 @@
 {
-  "version": 1,
-  "outbounds": [
-    {
-      "type": "vless",
-      "tag": "EDGE-1",
-      "server": "edge1.titovka.com",
-      "server_port": 443,
-      "uuid": "a19b88b4-9806-485d-b7fe-db004bd081ea",
-      "flow": "xtls-rprx-vision",
-      "tls": {
-        "enabled": true,
-        "server_name": "www.cloudflare.com",
-        "reality": {
-          "enabled": true,
-          "public_key": "V1uvVIkq6QpFnVb3s6Tos3wdFl55B9OEQXoHAcV6rhM",
-          "short_id": "f4d1decfa8c1a5cb"
-        }
-      }
-    }
-  ],
-  "route": {
-    "final": "EDGE-1"
-  }
+  "subscriptions": [
+    "vless://a19b88b4-9806-485d-b7fe-db004bd081ea@edge1.titovka.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=V1uvVIkq6QpFnVb3s6Tos3wdFl55B9OEQXoHAcV6rhM&sid=f4d1decfa8c1a5cb&type=tcp#EDGE-1"
+  ]
 }
 
