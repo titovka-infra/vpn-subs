@@ -1,12 +1,26 @@
 {
-  "name": "Transconvey VPN — user-001",
-  "description": "Subscription for user-001",
-  "updated": "2026-01-30",
-  "servers": [
+  "version": 1,
+  "outbounds": [
     {
-      "name": "EDGE-1",
-      "address": "edge1.titovka.com",
-      "port": 443
+      "type": "vless",
+      "tag": "EDGE-1",
+      "server": "edge1.titovka.com",
+      "server_port": 443,
+      "uuid": "a19b88b4-9806-485d-b7fe-db004bd081ea",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.cloudflare.com",
+        "reality": {
+          "enabled": true,
+          "public_key": "V1uvVIkq6QpFnVb3s6Tos3wdFl55B9OEQXoHAcV6rhM",
+          "short_id": "f4d1decfa8c1a5cb"
+        }
+      }
     }
-  ]
+  ],
+  "route": {
+    "final": "EDGE-1"
+  }
 }
+
