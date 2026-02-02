@@ -212,6 +212,49 @@ require_template
 echo "=== VPN мастер ==="
 ACTION=$(menu "Что сделать?" "Создать нового пользователя" "Редактировать существующего" "Отключить пользователя")
 
+if [[ "$ACTION" == "Отключить пользователя" ]]; then
+  USER_ID=$(prompt "Введите user-id (например user-005)")
+
+  JSON=$(get_user_json "$USER_ID" || true)
+  if [[ -z "${JSON:-}" ]]; then
+    echo "Не нашёл $USER_ID в users.csv" >&2
+    exit 1
+  fi
+
+  # Превращаем JSON в переменные окружения (без тройных кавычек)
+  eval "$(
+    python3 - <<'PY2'
+import json, os, sys
+row=json.loads(os.environ.get("JSON","{}"))
+for k,v in row.items():
+    v=str(v).replace('"','\\"')
+    print(f'{k.upper()}="{v}"')
+PY2
+  )"
+
+  echo ""
+  echo "Будет отключён пользователь:"
+  echo "  user_id: $USER_ID"
+  echo "  name:    $NAME"
+  echo "  group:   $GROUP"
+  echo "  status:  $STATUS  -> disabled"
+  read -r -p "Подтвердить отключение? (y/N): " OKDIS
+  OKDIS=${OKDIS:-N}
+  [[ "$OKDIS" =~ ^[Yy]$ ]] || { echo "Отменено."; exit 0; }
+
+  update_user_csv "$USER_ID" "$GROUP" "$PRIORITY" "$NAME" "$OWNER" "$PHONE" "$PHONE_TYPE" "$APP" "disabled" "$NOTES" "$CREATED_AT"
+
+  LINK="https://sub.titovka.com/subs/$USER_ID/sub.json"
+  commit_push_if_needed "disable $USER_ID $NAME"
+
+  echo ""
+  echo "✅ Отключено"
+  echo "User: $USER_ID"
+  echo "Link (останется тем же): $LINK"
+  exit 0
+fi
+
+
 if [[ "$ACTION" == "Создать нового пользователя" ]]; then
   GROUP=$(menu "Группа:" "staff" "friends")
   NAME=$(prompt "Введите имя")
