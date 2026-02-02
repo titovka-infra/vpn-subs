@@ -223,8 +223,8 @@ if [[ "$ACTION" == "Отключить пользователя" ]]; then
 
   # Превращаем JSON в переменные окружения (без тройных кавычек)
   eval "$(
-    python3 - <<'PY2'
-import json, os, sys
+    JSON="$JSON" python3 - <<'PY2'
+import json, os
 row=json.loads(os.environ.get("JSON","{}"))
 for k,v in row.items():
     v=str(v).replace('"','\\"')
