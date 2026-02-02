@@ -1,0 +1,56 @@
+{
+  "remarks": "Transconvey VPN — user-001 (EDGE-1)",
+  "log": { "loglevel": "info" },
+  "inbounds": [
+    {
+      "port": 1080,
+      "listen": "[::1]",
+      "tag": "socks",
+      "protocol": "socks",
+      "settings": { "udp": true },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "edge1.titovka.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "__UUID__",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "tcpSettings": {
+          "header": { "type": "none" }
+        },
+        "realitySettings": {
+          "serverName": "www.cloudflare.com",
+          "publicKey": "V1uvVIkq6QpFnVb3s6Tos3wdFl55B9OEQXoHAcV6rhM",
+          "shortId": "f4d1decfa8c1a5cb",
+          "fingerprint": "safari",
+          "spiderX": ""
+        }
+      }
+    },
+    { "tag": "direct", "protocol": "freedom", "settings": {} },
+    { "tag": "block", "protocol": "blackhole", "settings": { "response": { "type": "none" } } }
+  ]
+}
+

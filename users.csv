@@ -1,3 +1,23 @@
 user_id,group,priority,name,owner,phone,phone_type,app,status,notes,created_at
 user-002,staff,high,TBD,Transconvey,TBD,TBD,shadowrocket,active,,2026-02-02
 user-003,friends,normal,TBD,personal,TBD,TBD,v2raytun,active,,2026-02-02
+user-004,Группа:
+  1) staff
+  2) friends
+Неверный выбор. Попробуй ещё раз.
+staff,normal,Иван Петров,personal,98609870987-8,Устройство:
+  1) iPhone
+  2) Android
+  3) Windows
+Неверный выбор. Попробуй ещё раз.
+Windows,Приложение:
+  1) unknown
+  2) v2raytun
+  3) shadowrocket
+  4) nekobox
+  5) singbox
+  6) nekoray
+  7) other (ввести вручную)
+Неверный выбор. Попробуй ещё раз.
+Неверный выбор. Попробуй ещё раз.
+other (ввести вручную),active,sdlkjas,2026-02-02
