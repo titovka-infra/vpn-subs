@@ -244,6 +244,15 @@ PY2
 
   update_user_csv "$USER_ID" "$GROUP" "$PRIORITY" "$NAME" "$OWNER" "$PHONE" "$PHONE_TYPE" "$APP" "disabled" "$NOTES" "$CREATED_AT"
 
+  # HARD-ONLY: перевыпуск UUID + статус disabled
+  NEW_UUID=$(uuidgen | tr 'A-Z' 'a-z')
+  mkdir -p "subs/$USER_ID"
+  gen_sub_json "$USER_ID" "$NEW_UUID"
+  echo "OK: UUID перевыпущен (sub.json обновлён)."
+
+  update_user_csv "$USER_ID" "$GROUP" "$PRIORITY" "$NAME" "$OWNER" "$PHONE" "$PHONE_TYPE" "$APP" "disabled" "$NOTES" "$CREATED_AT"
+
+
   LINK="https://sub.titovka.com/subs/$USER_ID/sub.json"
   commit_push_if_needed "disable $USER_ID $NAME"
 
