@@ -26,7 +26,7 @@
             "port": 443,
             "users": [
               {
-                "id": "9798358e-a0cf-49e3-bb1a-57915321b0a0",
+                "id": "bc39ded0-8b15-4f0c-bbe4-7c15260be3da",
                 "encryption": "none",
                 "flow": "xtls-rprx-vision"
               }
