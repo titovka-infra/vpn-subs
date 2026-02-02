@@ -114,7 +114,7 @@ DEFAULT_APP=$(default_app_for "$PHONE_TYPE")
 OPTIONS=()
 for x in "$DEFAULT_APP" "v2raytun" "shadowrocket" "nekobox" "singbox" "nekoray" "other (ввести вручную)"; do
   skip=""
-  for y in "${OPTIONS[@]}"; do
+  for y in "${OPTIONS[@]:-}"; do
     [[ "$y" == "$x" ]] && skip="1"
   done
   [[ -z "$skip" ]] && OPTIONS+=("$x")
