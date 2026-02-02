@@ -108,6 +108,18 @@ PHONE_TYPE=$(norm_phone_type "$DEVICE")
 
 RAW_PHONE=$(prompt "Введите телефон (лучше полный, можно +7...)")
 PHONE=$(sanitize_phone "$RAW_PHONE")
+# Валидация телефона: минимум 10 цифр
+DIGITS_COUNT=$(echo "$PHONE" | tr -cd '0-9' | wc -c | tr -d ' ')
+if [[ "$DIGITS_COUNT" -lt 10 ]]; then
+  echo "Телефон слишком короткий (цифр: $DIGITS_COUNT). Введи полный номер." >&2
+  exit 1
+fi
+if [[ "$DIGITS_COUNT" -gt 16 ]]; then
+  read -r -p "Телефон очень длинный (цифр: $DIGITS_COUNT). Продолжить? (y/N): " OKLEN
+  OKLEN=${OKLEN:-N}
+  [[ "$OKLEN" =~ ^[Yy]$ ]] || exit 1
+fi
+
 
 DEFAULT_APP=$(default_app_for "$PHONE_TYPE")
 # Собираем список без дублей
