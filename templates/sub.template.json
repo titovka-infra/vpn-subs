@@ -1,5 +1,5 @@
 {
-  "remarks": "Transconvey VPN — user-001 (EDGE-1)",
+  "remarks": "Transconvey VPN — __USER_ID__ (EDGE-1)",
   "log": { "loglevel": "info" },
   "inbounds": [
     {

@@ -114,7 +114,11 @@ gen_sub_json() {
   python3 - <<PY
 from pathlib import Path
 tpl = Path("templates/sub.template.json").read_text(encoding="utf-8")
-out = tpl.replace("__UUID__", "$uuid")
+out = (
+  tpl
+  .replace("__UUID__", "$uuid")
+  .replace("__USER_ID__", "$user_id")
+)
 Path("subs/$user_id/sub.json").write_text(out, encoding="utf-8")
 PY
 }
