@@ -1,5 +1,5 @@
 {
-  "remarks": "Transconvey VPN — user-001 (EDGE-1)",
+  "remarks": "Transconvey VPN — user-011 (EDGE-1)",
   "log": { "loglevel": "info" },
   "inbounds": [
     {
@@ -26,7 +26,7 @@
             "port": 443,
             "users": [
               {
-                "id": "8b766f27-f206-48b4-8670-6f69f43fafab",
+                "id": "7068c15c-587e-4a8f-938c-1b5ac404409a",
                 "encryption": "none",
                 "flow": "xtls-rprx-vision"
               }
