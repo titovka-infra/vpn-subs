@@ -2,3 +2,4 @@ user_id,group,priority,name,owner,phone,phone_type,app,status,notes,created_at
 user-002,staff,high,TBD,Transconvey,TBD,TBD,shadowrocket,active,,2026-02-02
 user-003,friends,normal,TBD,personal,TBD,TBD,v2raytun,active,,2026-02-02
 user-004,staff,high,Иван Петров,Transconvey,986734983729458,iOS,shadowrocket,active,,2026-02-02
+user-005,staff,high,Иван Петров,Transconvey,987987,iOS,v2raytun,active,,2026-02-02
