@@ -1,0 +1,9 @@
+# Office/LibreOffice lock files
+.~lock.*#
+*.lock
+
+# Backups
+*.bak
+
+# macOS
+.DS_Store

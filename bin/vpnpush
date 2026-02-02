@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+
+REPO="$HOME/github/vpn-subs"
+cd "$REPO"
+
+# Проверка что это git-репо
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "Ошибка: $REPO не является git-репозиторием"
+  exit 1
+}
+
+# Покажем статус (для спокойствия)
+echo "== git status (до) =="
+git status --porcelain
+
+# Добавляем users.csv и все новые/изменённые sub.json (на всякий случай)
+git add users.csv subs || true
+
+# Если изменений нет — выходим
+if git diff --cached --quiet; then
+  echo "Нет изменений для отправки."
+  exit 0
+fi
+
+# Коммит
+MSG="${1:-sync users.csv}"
+git commit -m "$MSG"
+
+# Пуш
+git push
+
+echo "Готово: изменения отправлены в GitHub."
