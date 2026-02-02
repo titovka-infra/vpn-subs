@@ -1,0 +1,169 @@
+#!/bin/bash
+set -euo pipefail
+
+REPO="$HOME/github/vpn-subs"
+cd "$REPO"
+
+prompt() {
+  local label="$1"
+  local var
+  while true; do
+    read -r -p "$label: " var
+    if [[ -n "${var// /}" ]]; then
+      echo "$var"
+      return 0
+    fi
+    echo "Пусто. Попробуй ещё раз."
+  done
+}
+
+# меню: ВСЁ печатаем в stderr, а в stdout отдаём только выбранный вариант
+menu() {
+  local title="$1"; shift
+  local options=("$@")
+  echo "$title" >&2
+  local i=1
+  for opt in "${options[@]}"; do
+    echo "  $i) $opt" >&2
+    i=$((i+1))
+  done
+  while true; do
+    read -r -p "Выбери номер (1-${#options[@]}): " choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice>=1 && choice<=${#options[@]} )); then
+      echo "${options[$((choice-1))]}"
+      return 0
+    fi
+    echo "Неверный выбор. Попробуй ещё раз."
+  done
+}
+
+ensure_users_csv() {
+  if [[ ! -f users.csv ]]; then
+    echo "user_id,group,priority,name,owner,phone,phone_type,app,status,notes,created_at" > users.csv
+  fi
+}
+
+next_user_id() {
+  local last
+  last=$(awk -F',' 'NR>1 && $1 ~ /^user-[0-9]+$/ {sub("user-","",$1); if($1+0>m)m=$1} END{print m+0}' users.csv)
+  local next=$((last+1))
+  printf "user-%03d" "$next"
+}
+
+require_template() {
+  if [[ ! -f templates/sub.template.json ]]; then
+    echo "ERROR: templates/sub.template.json not found."
+    exit 1
+  fi
+  if ! grep -q "__UUID__" templates/sub.template.json; then
+    echo "ERROR: template does not contain __UUID__ marker."
+    exit 1
+  fi
+}
+
+norm_phone_type() {
+  case "$1" in
+    "iPhone") echo "iOS" ;;
+    "Android") echo "Android" ;;
+    "Windows") echo "Windows" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+default_app_for() {
+  local pt="$1"
+  case "$pt" in
+    "iOS") echo "v2raytun" ;;
+    "Android") echo "nekobox" ;;
+    "Windows") echo "nekoray" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+sanitize_phone() {
+  # оставляем только + и цифры
+  echo "$1" | tr -cd '+0-9'
+}
+
+gen_sub_json() {
+  local user_id="$1"
+  local uuid="$2"
+  python3 - <<PY
+from pathlib import Path
+tpl = Path("templates/sub.template.json").read_text(encoding="utf-8")
+out = tpl.replace("__UUID__", "$uuid")
+Path("subs/$user_id/sub.json").write_text(out, encoding="utf-8")
+PY
+}
+
+ensure_users_csv
+require_template
+
+echo "=== Добавление нового пользователя VPN ==="
+
+GROUP=$(menu "Группа:" "staff" "friends")
+NAME=$(prompt "Введите имя")
+DEVICE=$(menu "Устройство:" "iPhone" "Android" "Windows")
+PHONE_TYPE=$(norm_phone_type "$DEVICE")
+
+RAW_PHONE=$(prompt "Введите телефон (лучше полный, можно +7...)")
+PHONE=$(sanitize_phone "$RAW_PHONE")
+
+DEFAULT_APP=$(default_app_for "$PHONE_TYPE")
+# Собираем список без дублей
+OPTIONS=()
+for x in "$DEFAULT_APP" "v2raytun" "shadowrocket" "nekobox" "singbox" "nekoray" "other (ввести вручную)"; do
+  skip=""
+  for y in "${OPTIONS[@]}"; do
+    [[ "$y" == "$x" ]] && skip="1"
+  done
+  [[ -z "$skip" ]] && OPTIONS+=("$x")
+done
+APP=$(menu "Приложение:" "${OPTIONS[@]}")
+if [[ "$APP" == "other (ввести вручную)" ]]; then
+  APP=$(prompt "Введите название приложения (латиницей)")
+fi
+
+read -r -p "Примечание (можно пусто): " NOTES
+
+PRIORITY="normal"
+OWNER="personal"
+if [[ "$GROUP" == "staff" ]]; then
+  PRIORITY="high"
+  OWNER="Transconvey"
+fi
+
+USER_ID=$(next_user_id)
+UUID=$(uuidgen | tr 'A-Z' 'a-z')
+TODAY=$(date +%F)
+
+LINK="https://sub.titovka.com/subs/$USER_ID/sub.json"
+
+echo ""
+echo "Проверь перед сохранением:"
+echo "  user_id:   $USER_ID"
+echo "  group:     $GROUP"
+echo "  name:      $NAME"
+echo "  phone:     $PHONE"
+echo "  device:    $PHONE_TYPE"
+echo "  app:       $APP"
+echo "  link:      $LINK"
+read -r -p "Подтвердить и отправить в GitHub? (y/N): " OK
+OK=${OK:-N}
+if [[ ! "$OK" =~ ^[Yy]$ ]]; then
+  echo "Отменено."
+  exit 0
+fi
+
+mkdir -p "subs/$USER_ID"
+gen_sub_json "$USER_ID" "$UUID"
+echo "$USER_ID,$GROUP,$PRIORITY,$NAME,$OWNER,$PHONE,$PHONE_TYPE,$APP,active,$NOTES,$TODAY" >> users.csv
+
+git add users.csv "subs/$USER_ID/sub.json" templates/sub.template.json >/dev/null 2>&1 || true
+git commit -m "add $USER_ID ($GROUP) $NAME" >/dev/null
+git push >/dev/null
+
+echo ""
+echo "✅ Готово"
+echo "User: $USER_ID"
+echo "Link: $LINK"
