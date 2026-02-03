@@ -1,16 +1,24 @@
 {
   "remarks": "Transconvey VPN — user-001 (EDGE-1)",
-  "log": { "loglevel": "info" },
+  "log": {
+    "loglevel": "info"
+  },
   "inbounds": [
     {
       "port": 1080,
       "listen": "[::1]",
       "tag": "socks",
       "protocol": "socks",
-      "settings": { "udp": true },
+      "settings": {
+        "udp": true
+      },
       "sniffing": {
         "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
         "routeOnly": false
       }
     }
@@ -26,7 +34,7 @@
             "port": 443,
             "users": [
               {
-                "id": "a19b88b4-9806-485d-b7fe-db004bd081ea",
+                "id": "682c525f-139b-4d21-8512-6bbee488e628",
                 "encryption": "none",
                 "flow": "xtls-rprx-vision"
               }
@@ -38,7 +46,9 @@
         "network": "tcp",
         "security": "reality",
         "tcpSettings": {
-          "header": { "type": "none" }
+          "header": {
+            "type": "none"
+          }
         },
         "realitySettings": {
           "serverName": "www.cloudflare.com",
@@ -49,8 +59,19 @@
         }
       }
     },
-    { "tag": "direct", "protocol": "freedom", "settings": {} },
-    { "tag": "block", "protocol": "blackhole", "settings": { "response": { "type": "none" } } }
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {
+        "response": {
+          "type": "none"
+        }
+      }
+    }
   ]
 }
-

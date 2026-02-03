@@ -1,289 +1,152 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
-
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO"
 
 USERS_CSV="users.csv"
 SUBS_DIR="subs"
+TEMPLATE_JSON="$SUBS_DIR/_template/sub.json"
+VPNAPPLY_HOST="${VPNAPPLY_HOST:-edge1.titovka.com}"
 
-mkdir -p "$SUBS_DIR"
+die(){ echo "ERROR: $*" >&2; exit 1; }
 
-# ---- helpers ----
-menu() {
-  local title="$1"; shift
-  echo "$title"
-  local i=1
-  for opt in "$@"; do
-    echo "  $i) $opt"
-    i=$((i+1))
-  done
-  local choice
-  while true; do
-    read -r -p "Выбери номер (1-$((i-1))): " choice
-    [[ "$choice" =~ ^[0-9]+$ ]] || { echo "Неверный выбор. Попробуй ещё раз." >&2; continue; }
-    (( choice>=1 && choice<=i-1 )) || { echo "Неверный выбор. Попробуй ещё раз." >&2; continue; }
-    echo "${@:choice:1}"
-    return 0
-  done
+ensure(){
+  [ -f "$USERS_CSV" ] || die "$USERS_CSV не найден"
+  header="$(python3 - <<'PY'
+from pathlib import Path
+p=Path("users.csv")
+txt=p.read_text(encoding="utf-8-sig").splitlines()
+print((txt[0] if txt else "").strip())
+PY
+)"
+  [ "$header" = "id,name,status" ] || die "users.csv должен иметь заголовок: id,name,status"
+  [ -d "$SUBS_DIR" ] || die "нет директории $SUBS_DIR"
+  [ -f "$TEMPLATE_JSON" ] || die "нет шаблона $TEMPLATE_JSON"
 }
 
-prompt() {
-  local text="$1"
-  local def="${2:-}"
-  if [[ -n "$def" ]]; then
-    read -r -p "$text [$def]: " v
-    echo "${v:-$def}"
-  else
-    read -r -p "$text: " v
-    echo "$v"
-  fi
-}
-
-ensure_users_csv() {
-  if [[ ! -f "$USERS_CSV" ]]; then
-    echo "id,name,status" > "$USERS_CSV"
-  fi
-  local first
-  first="$(head -n 1 "$USERS_CSV" || true)"
-  if [[ "$first" != "id,name,status" ]]; then
-    echo "ERROR: users.csv должен иметь заголовок: id,name,status" >&2
-    exit 1
-  fi
-}
-
-norm_id() {
-  local raw="$1"
-  raw="$(echo "$raw" | tr -cd '0-9')"
-  if [[ ${#raw} -eq 1 ]]; then echo "00$raw"; return; fi
-  if [[ ${#raw} -eq 2 ]]; then echo "0$raw"; return; fi
-  if [[ ${#raw} -eq 3 ]]; then echo "$raw"; return; fi
-  echo ""
-}
-
-id_exists() {
-  local id="$1"
-  grep -qE "^${id}," "$USERS_CSV"
-}
-
-get_row() {
-  local id="$1"
-  grep -E "^${id}," "$USERS_CSV" || true
-}
-
-update_row() {
-  local id="$1" name="$2" status="$3"
-  # перезаписываем строку (если была) и сохраняем порядок: удалим старую, добавим в конец
-  tmp="$(mktemp)"
-  awk -F',' -v id="$id" 'NR==1{print;next} $1!=id {print}' "$USERS_CSV" > "$tmp"
-  echo "${id},${name},${status}" >> "$tmp"
-  mv "$tmp" "$USERS_CSV"
-}
-
-delete_row() {
-  local id="$1"
-  tmp="$(mktemp)"
-  awk -F',' -v id="$id" 'NR==1{print;next} $1!=id {print}' "$USERS_CSV" > "$tmp"
-  mv "$tmp" "$USERS_CSV"
-}
-
-make_sub_json() {
-  local id="$1"
-  local uuid="$2"
-
-  # IMPORTANT:
-  # Здесь мы используем параметры Reality как в твоём EDGE-1.
-  # Если когда-то сменишь serverName/publicKey/shortId — правишь только тут.
-  local server_addr="edge1.titovka.com"
-  local server_port="443"
-  local sni="www.cloudflare.com"
-  local public_key="V1uvVIkq6QpFnVb3s6Tos3wdFl55B9OEQXoHAcV6rhM"
-  local short_id="f4d1decfa8c1a5cb"
-  local fp="safari"
-
-  mkdir -p "$SUBS_DIR/$id"
-
-  cat > "$SUBS_DIR/$id/sub.json" <<JSON
-{
-  "remarks": "Transconvey VPN — ${id} (EDGE-1)",
-  "log": { "loglevel": "info" },
-  "inbounds": [
-    {
-      "port": 1080,
-      "listen": "[::1]",
-      "tag": "socks",
-      "protocol": "socks",
-      "settings": { "udp": true },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
-        "routeOnly": false
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "tag": "proxy",
-      "protocol": "vless",
-      "settings": {
-        "vnext": [
-          {
-            "address": "${server_addr}",
-            "port": ${server_port},
-            "users": [
-              {
-                "id": "${uuid}",
-                "encryption": "none",
-                "flow": "xtls-rprx-vision"
-              }
-            ]
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "tcpSettings": { "header": { "type": "none" } },
-        "realitySettings": {
-          "serverName": "${sni}",
-          "publicKey": "${public_key}",
-          "shortId": "${short_id}",
-          "fingerprint": "${fp}",
-          "spiderX": ""
-        }
-      }
-    },
-    { "tag": "direct", "protocol": "freedom", "settings": {} },
-    { "tag": "block", "protocol": "blackhole", "settings": { "response": { "type": "none" } } }
-  ]
-}
-JSON
-}
-
-gen_uuid() {
-  python3 - <<'PY'
-import uuid
-print(str(uuid.uuid4()))
+list_users(){
+python3 - <<'PY'
+import csv
+rows=[]
+with open("users.csv","r",encoding="utf-8-sig",newline="") as f:
+    r=csv.DictReader(f)
+    for row in r:
+        rows.append(((row["id"] or "").strip(),
+                     (row["status"] or "").strip(),
+                     (row["name"] or "").strip()))
+rows.sort(key=lambda x:x[0])
+print("ID   STATUS     NAME")
+print("--------------------------")
+for i,st,name in rows:
+    print(f"{i:<4} {st:<10} {name}")
 PY
 }
 
-git_commit_push() {
-  local msg="$1"
-  git add "$USERS_CSV" "$SUBS_DIR" >/dev/null 2>&1 || true
-  if git diff --cached --quiet; then
-    echo "OK: no changes to commit"
-    return 0
-  fi
-  git commit -m "$msg" >/dev/null
-  git push >/dev/null
+next_id(){
+python3 - <<'PY'
+import csv
+mx=0
+with open("users.csv","r",encoding="utf-8-sig",newline="") as f:
+    r=csv.DictReader(f)
+    for row in r:
+        i=(row.get("id") or "").strip()
+        if i.isdigit() and len(i)==3:
+            mx=max(mx,int(i))
+print(f"{mx+1:03d}")
+PY
 }
 
-# ---- main ----
-ensure_users_csv
+# === UX: подсказка всегда печатается, значение возвращается ЧИСТО ===
+status_prompt(){
+  local current="${1:-active}"
+  local def="1"
+  [ "$current" = "disabled" ] && def="2"
 
+  echo "Статус:" >&2
+  echo "1) active" >&2
+  echo "2) disabled" >&2
+  read -r -p "Выбери номер (1-2) [по умолчанию $def]: " a >&2
+  a="${a:-$def}"
+
+  if [ "$a" = "2" ]; then
+    echo "disabled"
+  else
+    echo "active"
+  fi
+}
+
+gen_uuid(){ python3 - <<'PY'
+import uuid; print(uuid.uuid4())
+PY
+}
+
+create_sub_json(){
+  local id="$1" uuid="$2"
+  mkdir -p "$SUBS_DIR/$id"
+  python3 - <<PY
+import json
+from pathlib import Path
+tpl=Path("$TEMPLATE_JSON")
+out=Path("$SUBS_DIR/$id/sub.json")
+d=json.loads(tpl.read_text(encoding="utf-8"))
+d["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"]="$uuid"
+out.write_text(json.dumps(d,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+print("OK: sub.json создан", out)
+PY
+}
+
+create_user(){
+  echo "=== Создать пользователя ==="
+  id="$(next_id)"
+  echo "Новый ID: $id"
+  read -r -p "Введите имя: " name
+  name="$(echo "$name" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  [ -n "$name" ] || die "имя не может быть пустым"
+
+  status="$(status_prompt active)"
+  uuid="$(gen_uuid)"
+
+  python3 - <<PY
+import csv
+rows=[]
+with open("$USERS_CSV","r",encoding="utf-8-sig",newline="") as f:
+    r=csv.DictReader(f)
+    for row in r:
+        rows.append(row)
+rows.append({"id":"$id","name":"$name","status":"$status"})
+with open("$USERS_CSV","w",encoding="utf-8",newline="") as f:
+    w=csv.DictWriter(f,fieldnames=["id","name","status"])
+    w.writeheader(); w.writerows(rows)
+print("OK: users.csv обновлён")
+PY
+
+  create_sub_json "$id" "$uuid"
+  echo "✅ Создан пользователь: $id — $name — $status"
+  echo "UUID: $uuid"
+}
+
+after(){
+  echo
+  echo "ℹ️  Не забудь применить изменения:"
+  echo "    ./bin/vpnapply $VPNAPPLY_HOST"
+  echo
+  echo "Что дальше?"
+  echo "1) Главное меню"
+  echo "2) Выход"
+  read -r -p "Выбери номер (1-2): " a
+  [ "$a" = "2" ] && return 1 || return 0
+}
+
+ensure
 while true; do
-  echo "=== VPN мастер (минимальный) ==="
-  ACTION=$(menu "Что сделать?" "Создать" "Редактировать" "Удалить (hard)" "Выйти")
-
-  if [[ "$ACTION" == "Выйти" ]]; then
-    exit 0
-  fi
-
-  if [[ "$ACTION" == "Создать" ]]; then
-    raw="$(prompt "Введите ID (3 цифры, можно 1-3 цифры)")"
-    id="$(norm_id "$raw")"
-    [[ -n "$id" ]] || { echo "ERROR: неверный ID" >&2; continue; }
-    if id_exists "$id"; then
-      echo "ERROR: ID $id уже существует" >&2
-      continue
-    fi
-
-    name="$(prompt "Введите имя")"
-    status="$(menu "Статус:" "active" "disabled")"
-
-    uuid="$(gen_uuid)"
-    update_row "$id" "$name" "$status"
-    make_sub_json "$id" "$uuid"
-
-    git_commit_push "vpnadd: create $id"
-
-    echo ""
-    echo "✅ Создано: $id"
-    echo "Link: https://sub.titovka.com/subs/$id/sub.json"
-    echo ""
-
-  elif [[ "$ACTION" == "Редактировать" ]]; then
-    raw="$(prompt "Введите ID")"
-    id="$(norm_id "$raw")"
-    [[ -n "$id" ]] || { echo "ERROR: неверный ID" >&2; continue; }
-
-    row="$(get_row "$id")"
-    if [[ -z "$row" ]]; then
-      echo "ERROR: ID $id не найден" >&2
-      continue
-    fi
-
-    cur_name="$(echo "$row" | cut -d',' -f2)"
-    cur_status="$(echo "$row" | cut -d',' -f3)"
-
-    echo "Текущие значения (Enter = оставить):"
-    name="$(prompt "name" "$cur_name")"
-
-    # статус — выбором
-    echo "status (active/disabled) [$cur_status] (Enter = оставить):"
-    read -r st_in
-    if [[ -z "${st_in:-}" ]]; then
-      status="$cur_status"
-    else
-      case "$st_in" in
-        active|disabled) status="$st_in" ;;
-        *) echo "ERROR: статус только active/disabled" >&2; continue ;;
-      esac
-    fi
-
-    read -r -p "Перевыпустить UUID и пересоздать sub.json? (y/N): " R
-    R=${R:-N}
-    if [[ "$R" =~ ^[Yy]$ ]]; then
-      uuid="$(gen_uuid)"
-      make_sub_json "$id" "$uuid"
-      echo "OK: sub.json пересоздан"
-    fi
-
-    update_row "$id" "$name" "$status"
-    git_commit_push "vpnadd: edit $id"
-
-    echo ""
-    echo "✅ Обновлено: $id"
-    echo "Link: https://sub.titovka.com/subs/$id/sub.json"
-    echo ""
-
-  elif [[ "$ACTION" == "Удалить (hard)" ]]; then
-    raw="$(prompt "Введите ID")"
-    id="$(norm_id "$raw")"
-    [[ -n "$id" ]] || { echo "ERROR: неверный ID" >&2; continue; }
-
-    row="$(get_row "$id")"
-    if [[ -z "$row" ]]; then
-      echo "ERROR: ID $id не найден" >&2
-      continue
-    fi
-
-    name="$(echo "$row" | cut -d',' -f2)"
-    echo "Будет УДАЛЕНО (hard): $id — $name"
-    read -r -p "Подтвердить удаление? (y/N): " OK
-    OK=${OK:-N}
-    [[ "$OK" =~ ^[Yy]$ ]] || { echo "Отменено."; continue; }
-
-    delete_row "$id"
-    rm -rf "$SUBS_DIR/$id" || true
-
-    git_commit_push "vpnadd: delete $id"
-
-    echo "✅ Удалено: $id"
-    echo "⚠️ Важно: запусти vpnapply, чтобы убрать доступ на сервере."
-    echo ""
-  fi
-
-  NEXT=$(menu "Что дальше?" "Создать ещё" "Выйти")
-  [[ "$NEXT" == "Выйти" ]] && exit 0
+  echo "=== VPN мастер ==="
+  echo "1) Создать пользователя"
+  echo "2) Редактировать пользователя"
+  echo "3) Удалить пользователя"
+  echo "4) Выход"
+  read -r -p "Выбери номер (1-4): " c
+  case "$c" in
+    1) create_user; after || break ;;
+    4) break ;;
+    *) echo "Пока тестируем только создание";;
+  esac
 done
+exit 0
