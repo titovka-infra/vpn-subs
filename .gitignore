@@ -9,3 +9,6 @@
 .DS_Store
 subs.bak.*
 users.csv.old
+
+# local backups
+bin/vpnadd.bak.*
