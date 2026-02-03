@@ -1,408 +1,289 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO="$HOME/github/vpn-subs"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
-prompt() {
-  local label="$1"
-  local var
-  while true; do
-    read -r -p "$label: " var
-    if [[ -n "${var// /}" ]]; then
-      echo "$var"
-      return 0
-    fi
-    echo "Пусто. Попробуй ещё раз."
-  done
-}
+USERS_CSV="users.csv"
+SUBS_DIR="subs"
 
-prompt_optional() {
-  local label="$1"
-  local current="${2:-}"
-  local var
-  read -r -p "$label [$current] (Enter = оставить): " var
-  if [[ -z "${var// /}" ]]; then
-    echo "$current"
-  else
-    echo "$var"
-  fi
-}
+mkdir -p "$SUBS_DIR"
 
-# меню: печатаем в stderr, выбранное значение в stdout
+# ---- helpers ----
 menu() {
   local title="$1"; shift
-  local options=("$@")
-  echo "$title" >&2
+  echo "$title"
   local i=1
-  for opt in "${options[@]}"; do
-    echo "  $i) $opt" >&2
+  for opt in "$@"; do
+    echo "  $i) $opt"
     i=$((i+1))
   done
+  local choice
   while true; do
-    read -r -p "Выбери номер (1-${#options[@]}): " choice
-    if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice>=1 && choice<=${#options[@]} )); then
-      echo "${options[$((choice-1))]}"
-      return 0
-    fi
-    echo "Неверный выбор. Попробуй ещё раз."
+    read -r -p "Выбери номер (1-$((i-1))): " choice
+    [[ "$choice" =~ ^[0-9]+$ ]] || { echo "Неверный выбор. Попробуй ещё раз." >&2; continue; }
+    (( choice>=1 && choice<=i-1 )) || { echo "Неверный выбор. Попробуй ещё раз." >&2; continue; }
+    echo "${@:choice:1}"
+    return 0
   done
+}
+
+prompt() {
+  local text="$1"
+  local def="${2:-}"
+  if [[ -n "$def" ]]; then
+    read -r -p "$text [$def]: " v
+    echo "${v:-$def}"
+  else
+    read -r -p "$text: " v
+    echo "$v"
+  fi
 }
 
 ensure_users_csv() {
-  if [[ ! -f users.csv ]]; then
-    echo "user_id,group,priority,name,owner,phone,phone_type,app,status,notes,created_at" > users.csv
+  if [[ ! -f "$USERS_CSV" ]]; then
+    echo "id,name,status" > "$USERS_CSV"
   fi
-}
-
-require_template() {
-  if [[ ! -f templates/sub.template.json ]]; then
-    echo "ERROR: templates/sub.template.json not found."
-    exit 1
-  fi
-  if ! grep -q "__UUID__" templates/sub.template.json; then
-    echo "ERROR: template does not contain __UUID__ marker."
+  local first
+  first="$(head -n 1 "$USERS_CSV" || true)"
+  if [[ "$first" != "id,name,status" ]]; then
+    echo "ERROR: users.csv должен иметь заголовок: id,name,status" >&2
     exit 1
   fi
 }
 
-sanitize_phone() { echo "$1" | tr -cd '+0-9'; }
-
-norm_phone_type() {
-  case "$1" in
-    "iPhone") echo "iOS" ;;
-    "Android") echo "Android" ;;
-    "Windows") echo "Windows" ;;
-    *) echo "$1" ;;
-  esac
+norm_id() {
+  local raw="$1"
+  raw="$(echo "$raw" | tr -cd '0-9')"
+  if [[ ${#raw} -eq 1 ]]; then echo "00$raw"; return; fi
+  if [[ ${#raw} -eq 2 ]]; then echo "0$raw"; return; fi
+  if [[ ${#raw} -eq 3 ]]; then echo "$raw"; return; fi
+  echo ""
 }
 
-default_app_for() {
-  local pt="$1"
-  case "$pt" in
-    "iOS") echo "v2raytun" ;;
-    "Android") echo "nekobox" ;;
-    "Windows") echo "nekoray" ;;
-    *) echo "unknown" ;;
-  esac
+id_exists() {
+  local id="$1"
+  grep -qE "^${id}," "$USERS_CSV"
 }
 
-# собираем меню приложений без дублей (совместимо с bash 3.2 + set -u)
-app_menu() {
-  local default_app="$1"
-  OPTIONS=()
-  for x in "$default_app" "v2raytun" "shadowrocket" "nekobox" "singbox" "nekoray" "other (ввести вручную)"; do
-    dup=""
-    for y in "${OPTIONS[@]:-}"; do
-      [[ "$y" == "$x" ]] && dup="1"
-    done
-    [[ -z "$dup" ]] && OPTIONS+=("$x")
-  done
-  menu "Приложение:" "${OPTIONS[@]}"
+get_row() {
+  local id="$1"
+  grep -E "^${id}," "$USERS_CSV" || true
 }
 
-next_user_id() {
-  local last
-  last=$(awk -F',' 'NR>1 && $1 ~ /^user-[0-9]+$/ {sub("user-","",$1); if($1+0>m)m=$1} END{print m+0}' users.csv)
-  local next=$((last+1))
-  printf "user-%03d" "$next"
+update_row() {
+  local id="$1" name="$2" status="$3"
+  # перезаписываем строку (если была) и сохраняем порядок: удалим старую, добавим в конец
+  tmp="$(mktemp)"
+  awk -F',' -v id="$id" 'NR==1{print;next} $1!=id {print}' "$USERS_CSV" > "$tmp"
+  echo "${id},${name},${status}" >> "$tmp"
+  mv "$tmp" "$USERS_CSV"
 }
 
-gen_sub_json() {
-  local user_id="$1"
+delete_row() {
+  local id="$1"
+  tmp="$(mktemp)"
+  awk -F',' -v id="$id" 'NR==1{print;next} $1!=id {print}' "$USERS_CSV" > "$tmp"
+  mv "$tmp" "$USERS_CSV"
+}
+
+make_sub_json() {
+  local id="$1"
   local uuid="$2"
-  python3 - <<PY
-from pathlib import Path
-tpl = Path("templates/sub.template.json").read_text(encoding="utf-8")
-out = (
-  tpl
-  .replace("__UUID__", "$uuid")
-  .replace("__USER_ID__", "$user_id")
-)
-Path("subs/$user_id/sub.json").write_text(out, encoding="utf-8")
+
+  # IMPORTANT:
+  # Здесь мы используем параметры Reality как в твоём EDGE-1.
+  # Если когда-то сменишь serverName/publicKey/shortId — правишь только тут.
+  local server_addr="edge1.titovka.com"
+  local server_port="443"
+  local sni="www.cloudflare.com"
+  local public_key="V1uvVIkq6QpFnVb3s6Tos3wdFl55B9OEQXoHAcV6rhM"
+  local short_id="f4d1decfa8c1a5cb"
+  local fp="safari"
+
+  mkdir -p "$SUBS_DIR/$id"
+
+  cat > "$SUBS_DIR/$id/sub.json" <<JSON
+{
+  "remarks": "Transconvey VPN — ${id} (EDGE-1)",
+  "log": { "loglevel": "info" },
+  "inbounds": [
+    {
+      "port": 1080,
+      "listen": "[::1]",
+      "tag": "socks",
+      "protocol": "socks",
+      "settings": { "udp": true },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": false
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "${server_addr}",
+            "port": ${server_port},
+            "users": [
+              {
+                "id": "${uuid}",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "tcpSettings": { "header": { "type": "none" } },
+        "realitySettings": {
+          "serverName": "${sni}",
+          "publicKey": "${public_key}",
+          "shortId": "${short_id}",
+          "fingerprint": "${fp}",
+          "spiderX": ""
+        }
+      }
+    },
+    { "tag": "direct", "protocol": "freedom", "settings": {} },
+    { "tag": "block", "protocol": "blackhole", "settings": { "response": { "type": "none" } } }
+  ]
+}
+JSON
+}
+
+gen_uuid() {
+  python3 - <<'PY'
+import uuid
+print(str(uuid.uuid4()))
 PY
 }
 
-# получить текущие данные пользователя из users.csv как JSON в stdout
-get_user_json() {
-  local user_id="$1"
-  python3 - <<PY
-import csv, json
-from pathlib import Path
-uid="$user_id"
-p=Path("users.csv")
-with p.open(newline="", encoding="utf-8") as f:
-    r=csv.DictReader(f)
-    for row in r:
-        if row.get("user_id")==uid:
-            print(json.dumps(row, ensure_ascii=False))
-            raise SystemExit(0)
-raise SystemExit(2)
-PY
-}
-
-# обновить строку пользователя в users.csv (на месте) по переданным полям
-update_user_csv() {
-  local user_id="$1"
-  local group="$2"
-  local priority="$3"
-  local name="$4"
-  local owner="$5"
-  local phone="$6"
-  local phone_type="$7"
-  local app="$8"
-  local status="$9"
-  local notes="${10}"
-  local created_at="${11}"
-
-  python3 - <<PY
-import csv
-from pathlib import Path
-
-uid="$user_id"
-new_row = {
-  "user_id": uid,
-  "group": "$group",
-  "priority": "$priority",
-  "name": "$name",
-  "owner": "$owner",
-  "phone": "$phone",
-  "phone_type": "$phone_type",
-  "app": "$app",
-  "status": "$status",
-  "notes": "$notes",
-  "created_at": "$created_at",
-}
-
-p=Path("users.csv")
-with p.open(newline="", encoding="utf-8") as f:
-    r=csv.DictReader(f)
-    fields=r.fieldnames
-    rows=list(r)
-
-found=False
-for i,row in enumerate(rows):
-    if row.get("user_id")==uid:
-        rows[i]=new_row
-        found=True
-        break
-
-if not found:
-    raise SystemExit("User not found in users.csv")
-
-with p.open("w", newline="", encoding="utf-8") as f:
-    w=csv.DictWriter(f, fieldnames=fields)
-    w.writeheader()
-    w.writerows(rows)
-print("OK")
-PY
-}
-
-commit_push_if_needed() {
+git_commit_push() {
   local msg="$1"
-  git add users.csv subs templates/sub.template.json >/dev/null 2>&1 || true
+  git add "$USERS_CSV" "$SUBS_DIR" >/dev/null 2>&1 || true
   if git diff --cached --quiet; then
-    echo "Нет изменений для отправки."
-    exit 0
+    echo "OK: no changes to commit"
+    return 0
   fi
   git commit -m "$msg" >/dev/null
   git push >/dev/null
 }
 
-# ---------- main ----------
+# ---- main ----
 ensure_users_csv
-require_template
 
-echo "=== VPN мастер ==="
-ACTION=$(menu "Что сделать?" "Создать нового пользователя" "Редактировать существующего" "Отключить пользователя")
+while true; do
+  echo "=== VPN мастер (минимальный) ==="
+  ACTION=$(menu "Что сделать?" "Создать" "Редактировать" "Удалить (hard)" "Выйти")
 
-if [[ "$ACTION" == "Отключить пользователя" ]]; then
-  USER_ID=$(prompt "Введите user-id (например user-005)")
-
-  JSON=$(get_user_json "$USER_ID" || true)
-  if [[ -z "${JSON:-}" ]]; then
-    echo "Не нашёл $USER_ID в users.csv" >&2
-    exit 1
+  if [[ "$ACTION" == "Выйти" ]]; then
+    exit 0
   fi
 
-  # Превращаем JSON в переменные окружения (без тройных кавычек)
-  eval "$(
-    JSON="$JSON" python3 - <<'PY2'
-import json, os
-row=json.loads(os.environ.get("JSON","{}"))
-for k,v in row.items():
-    v=str(v).replace('"','\\"')
-    print(f'{k.upper()}="{v}"')
-PY2
-  )"
-
-  echo ""
-  echo "Будет отключён пользователь:"
-  echo "  user_id: $USER_ID"
-  echo "  name:    $NAME"
-  echo "  group:   $GROUP"
-  echo "  status:  $STATUS  -> disabled"
-  read -r -p "Подтвердить отключение? (y/N): " OKDIS
-  OKDIS=${OKDIS:-N}
-  [[ "$OKDIS" =~ ^[Yy]$ ]] || { echo "Отменено."; exit 0; }
-
-  update_user_csv "$USER_ID" "$GROUP" "$PRIORITY" "$NAME" "$OWNER" "$PHONE" "$PHONE_TYPE" "$APP" "disabled" "$NOTES" "$CREATED_AT"
-
-  # HARD-ONLY: перевыпуск UUID + статус disabled
-  NEW_UUID=$(uuidgen | tr 'A-Z' 'a-z')
-  mkdir -p "subs/$USER_ID"
-  gen_sub_json "$USER_ID" "$NEW_UUID"
-  echo "OK: UUID перевыпущен (sub.json обновлён)."
-
-  update_user_csv "$USER_ID" "$GROUP" "$PRIORITY" "$NAME" "$OWNER" "$PHONE" "$PHONE_TYPE" "$APP" "disabled" "$NOTES" "$CREATED_AT"
-
-
-  LINK="https://sub.titovka.com/subs/$USER_ID/sub.json"
-  commit_push_if_needed "disable $USER_ID $NAME"
-
-  echo ""
-  echo "✅ Отключено"
-  echo "User: $USER_ID"
-  echo "Link (останется тем же): $LINK"
-  exit 0
-fi
-
-
-if [[ "$ACTION" == "Создать нового пользователя" ]]; then
-  GROUP=$(menu "Группа:" "staff" "friends")
-  NAME=$(prompt "Введите имя")
-  DEVICE=$(menu "Устройство:" "iPhone" "Android" "Windows")
-  PHONE_TYPE=$(norm_phone_type "$DEVICE")
-
-  # телефон с повтором
-  while true; do
-    RAW_PHONE=$(prompt "Введите телефон (лучше полный, можно +7...)")
-    PHONE=$(sanitize_phone "$RAW_PHONE")
-    DIGITS_COUNT=$(echo "$PHONE" | tr -cd '0-9' | wc -c | tr -d ' ')
-    if [[ "$DIGITS_COUNT" -lt 10 ]]; then
-      echo "Телефон слишком короткий (цифр: $DIGITS_COUNT). Введи полный номер." >&2
+  if [[ "$ACTION" == "Создать" ]]; then
+    raw="$(prompt "Введите ID (3 цифры, можно 1-3 цифры)")"
+    id="$(norm_id "$raw")"
+    [[ -n "$id" ]] || { echo "ERROR: неверный ID" >&2; continue; }
+    if id_exists "$id"; then
+      echo "ERROR: ID $id уже существует" >&2
       continue
     fi
-    if [[ "$DIGITS_COUNT" -gt 16 ]]; then
-      read -r -p "Телефон очень длинный (цифр: $DIGITS_COUNT). Это точно? (y/N): " OKLEN
-      OKLEN=${OKLEN:-N}
-      [[ "$OKLEN" =~ ^[Yy]$ ]] || continue
+
+    name="$(prompt "Введите имя")"
+    status="$(menu "Статус:" "active" "disabled")"
+
+    uuid="$(gen_uuid)"
+    update_row "$id" "$name" "$status"
+    make_sub_json "$id" "$uuid"
+
+    git_commit_push "vpnadd: create $id"
+
+    echo ""
+    echo "✅ Создано: $id"
+    echo "Link: https://sub.titovka.com/subs/$id/sub.json"
+    echo ""
+
+  elif [[ "$ACTION" == "Редактировать" ]]; then
+    raw="$(prompt "Введите ID")"
+    id="$(norm_id "$raw")"
+    [[ -n "$id" ]] || { echo "ERROR: неверный ID" >&2; continue; }
+
+    row="$(get_row "$id")"
+    if [[ -z "$row" ]]; then
+      echo "ERROR: ID $id не найден" >&2
+      continue
     fi
-    break
-  done
 
-  DEFAULT_APP=$(default_app_for "$PHONE_TYPE")
-  APP=$(app_menu "$DEFAULT_APP")
-  if [[ "$APP" == "other (ввести вручную)" ]]; then
-    APP=$(prompt "Введите название приложения (латиницей)")
+    cur_name="$(echo "$row" | cut -d',' -f2)"
+    cur_status="$(echo "$row" | cut -d',' -f3)"
+
+    echo "Текущие значения (Enter = оставить):"
+    name="$(prompt "name" "$cur_name")"
+
+    # статус — выбором
+    echo "status (active/disabled) [$cur_status] (Enter = оставить):"
+    read -r st_in
+    if [[ -z "${st_in:-}" ]]; then
+      status="$cur_status"
+    else
+      case "$st_in" in
+        active|disabled) status="$st_in" ;;
+        *) echo "ERROR: статус только active/disabled" >&2; continue ;;
+      esac
+    fi
+
+    read -r -p "Перевыпустить UUID и пересоздать sub.json? (y/N): " R
+    R=${R:-N}
+    if [[ "$R" =~ ^[Yy]$ ]]; then
+      uuid="$(gen_uuid)"
+      make_sub_json "$id" "$uuid"
+      echo "OK: sub.json пересоздан"
+    fi
+
+    update_row "$id" "$name" "$status"
+    git_commit_push "vpnadd: edit $id"
+
+    echo ""
+    echo "✅ Обновлено: $id"
+    echo "Link: https://sub.titovka.com/subs/$id/sub.json"
+    echo ""
+
+  elif [[ "$ACTION" == "Удалить (hard)" ]]; then
+    raw="$(prompt "Введите ID")"
+    id="$(norm_id "$raw")"
+    [[ -n "$id" ]] || { echo "ERROR: неверный ID" >&2; continue; }
+
+    row="$(get_row "$id")"
+    if [[ -z "$row" ]]; then
+      echo "ERROR: ID $id не найден" >&2
+      continue
+    fi
+
+    name="$(echo "$row" | cut -d',' -f2)"
+    echo "Будет УДАЛЕНО (hard): $id — $name"
+    read -r -p "Подтвердить удаление? (y/N): " OK
+    OK=${OK:-N}
+    [[ "$OK" =~ ^[Yy]$ ]] || { echo "Отменено."; continue; }
+
+    delete_row "$id"
+    rm -rf "$SUBS_DIR/$id" || true
+
+    git_commit_push "vpnadd: delete $id"
+
+    echo "✅ Удалено: $id"
+    echo "⚠️ Важно: запусти vpnapply, чтобы убрать доступ на сервере."
+    echo ""
   fi
 
-  read -r -p "Примечание (можно пусто): " NOTES
-
-  PRIORITY="normal"
-  OWNER="personal"
-  if [[ "$GROUP" == "staff" ]]; then
-    PRIORITY="high"
-    OWNER="Transconvey"
-  fi
-
-  USER_ID=$(next_user_id)
-  UUID=$(uuidgen | tr 'A-Z' 'a-z')
-  TODAY=$(date +%F)
-  LINK="https://sub.titovka.com/subs/$USER_ID/sub.json"
-
-  echo ""
-  echo "Проверь перед сохранением:"
-  echo "  user_id:   $USER_ID"
-  echo "  group:     $GROUP"
-  echo "  name:      $NAME"
-  echo "  phone:     $PHONE"
-  echo "  device:    $PHONE_TYPE"
-  echo "  app:       $APP"
-  echo "  link:      $LINK"
-  read -r -p "Подтвердить и отправить в GitHub? (y/N): " OK
-  OK=${OK:-N}
-  [[ "$OK" =~ ^[Yy]$ ]] || { echo "Отменено."; exit 0; }
-
-  mkdir -p "subs/$USER_ID"
-  gen_sub_json "$USER_ID" "$UUID"
-  echo "$USER_ID,$GROUP,$PRIORITY,$NAME,$OWNER,$PHONE,$PHONE_TYPE,$APP,active,$NOTES,$TODAY" >> users.csv
-
-  commit_push_if_needed "add $USER_ID ($GROUP) $NAME"
-
-  echo ""
-  echo "✅ Готово"
-  echo "User: $USER_ID"
-  echo "Link: $LINK"
-  exit 0
-fi
-
-# ---------- EDIT ----------
-USER_ID=$(prompt "Введите user-id (например user-005)")
-
-JSON=$(get_user_json "$USER_ID" || true)
-if [[ -z "${JSON:-}" ]]; then
-  echo "Не нашёл $USER_ID в users.csv" >&2
-  exit 1
-fi
-
-# распарсим JSON в переменные (через python)
-eval "$(python3 - <<PY
-import json
-row=json.loads('''$JSON''')
-for k,v in row.items():
-    # экранируем кавычки
-    v=str(v).replace('"','\\"')
-    print(f'{k.upper()}="{v}"')
-PY
-)"
-
-echo ""
-echo "Текущие значения (Enter = оставить как есть):"
-
-GROUP_NEW=$(prompt_optional "group (staff/friends)" "$GROUP")
-NAME_NEW=$(prompt_optional "name" "$NAME")
-OWNER_NEW=$(prompt_optional "owner" "$OWNER")
-STATUS_NEW=$(prompt_optional "status (active/disabled)" "$STATUS")
-NOTES_NEW=$(prompt_optional "notes" "$NOTES")
-
-DEVICE_CHOICE=$(menu "phone_type (устройство):" "$PHONE_TYPE" "iOS" "Android" "Windows")
-PHONE_TYPE_NEW="$DEVICE_CHOICE"
-
-# телефон (опционально поменять)
-PHONE_RAW_NEW=$(prompt_optional "phone" "$PHONE")
-PHONE_NEW=$(sanitize_phone "$PHONE_RAW_NEW")
-
-# app
-DEFAULT_APP=$(default_app_for "$PHONE_TYPE_NEW")
-APP_CHOICE=$(app_menu "$DEFAULT_APP")
-if [[ "$APP_CHOICE" == "other (ввести вручную)" ]]; then
-  APP_NEW=$(prompt "Введите название приложения (латиницей)")
-else
-  APP_NEW="$APP_CHOICE"
-fi
-
-# приоритет/owner можно нормализовать по group (если хочешь — оставим твоё ручное OWNER_NEW)
-PRIORITY_NEW="$PRIORITY"
-if [[ "$GROUP_NEW" == "staff" ]]; then PRIORITY_NEW="high"; fi
-if [[ "$GROUP_NEW" == "friends" ]]; then PRIORITY_NEW="normal"; fi
-
-echo ""
-read -r -p "Перевыпустить ключ (UUID) и пересоздать sub.json? (y/N): " REISSUE
-REISSUE=${REISSUE:-N}
-if [[ "$REISSUE" =~ ^[Yy]$ ]]; then
-  NEW_UUID=$(uuidgen | tr 'A-Z' 'a-z')
-  mkdir -p "subs/$USER_ID"
-  gen_sub_json "$USER_ID" "$NEW_UUID"
-  echo "OK: sub.json пересоздан."
-fi
-
-update_user_csv "$USER_ID" "$GROUP_NEW" "$PRIORITY_NEW" "$NAME_NEW" "$OWNER_NEW" "$PHONE_NEW" "$PHONE_TYPE_NEW" "$APP_NEW" "$STATUS_NEW" "$NOTES_NEW" "$CREATED_AT"
-
-LINK="https://sub.titovka.com/subs/$USER_ID/sub.json"
-commit_push_if_needed "edit $USER_ID $NAME_NEW"
-
-echo ""
-echo "✅ Готово"
-echo "User: $USER_ID"
-echo "Link: $LINK"
+  NEXT=$(menu "Что дальше?" "Создать ещё" "Выйти")
+  [[ "$NEXT" == "Выйти" ]] && exit 0
+done

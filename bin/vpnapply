@@ -1,0 +1,171 @@
+#!/bin/bash
+set -euo pipefail
+
+HOST="${1:-edge1.titovka.com}"
+SSH_USER="${2:-admin}"
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO"
+
+[[ -f users.csv ]] || { echo "ERROR: users.csv not found in $REPO" >&2; exit 1; }
+
+# Собираем активные UUID из subs/<id>/sub.json, где users.csv status=active
+TMP_JSON="$(mktemp /tmp/vpnapply-uuids.XXXXXX.json)"
+
+COUNT="$(OUTFILE="$TMP_JSON" python3 - <<'PY'
+import csv, json, os, sys
+from pathlib import Path
+
+outfile = os.environ["OUTFILE"]
+
+active_ids=[]
+with open("users.csv", newline="", encoding="utf-8") as f:
+    r=csv.DictReader(f)
+    if r.fieldnames != ["id","name","status"]:
+        print("ERROR: users.csv must be: id,name,status", file=sys.stderr)
+        sys.exit(2)
+    for row in r:
+        if (row.get("status") or "").strip() == "active":
+            i=(row.get("id") or "").strip()
+            if i:
+                active_ids.append(i)
+
+out=[]
+missing=[]
+for i in active_ids:
+    p=Path(f"subs/{i}/sub.json")
+    if not p.exists():
+        missing.append(f"{i}: нет {p}")
+        continue
+    try:
+        d=json.loads(p.read_text(encoding="utf-8"))
+        uuid=d["outbounds"][0]["settings"]["vnext"][0]["users"][0]["id"]
+        flow=d["outbounds"][0]["settings"]["vnext"][0]["users"][0].get("flow","xtls-rprx-vision")
+        out.append({"id": i, "uuid": str(uuid).lower(), "flow": flow})
+    except Exception as e:
+        missing.append(f"{i}: ошибка чтения uuid ({e})")
+
+Path(outfile).write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+
+if missing:
+    print("WARN: проблемы с профилями:", file=sys.stderr)
+    for m in missing[:30]:
+        print("  -", m, file=sys.stderr)
+
+print(len(out))
+PY
+)"
+
+UUID_JSON="$(cat "$TMP_JSON")"
+rm -f "$TMP_JSON"
+
+echo "VPNAPPLY: host=$HOST user=$SSH_USER"
+echo "Активных UUID: ${COUNT:-0}"
+echo "Сейчас SSH попросит sudo-пароль на сервере (1 раз)."
+
+UUID_B64="$(printf '%s' "$UUID_JSON" | base64)"
+REMOTE_PY="/tmp/vpnapply_sync_${RANDOM}_${RANDOM}.py"
+
+# Upload sync-script
+ssh "$SSH_USER@$HOST" "cat > $REMOTE_PY" <<'PY'
+import base64, json, os, sys, time, shutil, subprocess
+from pathlib import Path
+
+b64 = os.environ.get("UUID_B64","")
+if not b64:
+    print("ERROR: UUID_B64 empty", file=sys.stderr)
+    sys.exit(10)
+
+rows = json.loads(base64.b64decode(b64.encode()).decode())
+
+CONF = Path("/opt/edge/conf/config.json")
+XRAY = Path("/opt/edge/bin/xray")
+
+if not CONF.exists():
+    print("ERROR: config not found:", CONF, file=sys.stderr)
+    sys.exit(12)
+
+cfg = json.loads(CONF.read_text(encoding="utf-8"))
+
+# find inbound vless+reality
+targets=[]
+for i, ib in enumerate(cfg.get("inbounds", [])):
+    if (ib.get("protocol") or "").lower() != "vless":
+        continue
+    ss = ib.get("streamSettings") or {}
+    sec = (ss.get("security") or "").lower()
+    if sec == "reality" or "realitySettings" in ss:
+        targets.append(i)
+
+if not targets:
+    print("ERROR: no inbound vless+reality found", file=sys.stderr)
+    sys.exit(13)
+
+idx = targets[0]
+ib = cfg["inbounds"][idx]
+settings = ib.setdefault("settings", {})
+clients = settings.setdefault("clients", [])
+
+desired = {str(r.get("uuid","")).lower().strip(): (r.get("flow") or "xtls-rprx-vision") for r in rows if r.get("uuid")}
+desired = {k:v for k,v in desired.items() if k}
+
+before = len([c for c in clients if c.get("id")])
+kept = 0
+removed = 0
+added = 0
+
+# Build new clients list: keep only desired + preserve non-uuid entries (если вдруг есть служебные)
+new_clients=[]
+seen=set()
+
+for c in clients:
+    cid = str(c.get("id","")).lower().strip()
+    if not cid:
+        new_clients.append(c)
+        continue
+    if cid in desired:
+        # keep, and normalize flow
+        new_clients.append({"id": cid, "flow": desired[cid]})
+        seen.add(cid)
+        kept += 1
+    else:
+        removed += 1
+
+for cid, flow in desired.items():
+    if cid in seen:
+        continue
+    new_clients.append({"id": cid, "flow": flow})
+    added += 1
+
+settings["clients"] = new_clients
+
+ts = time.strftime("%Y%m%d-%H%M%S")
+bak = CONF.with_suffix(f".json.bak.{ts}")
+shutil.copy2(CONF, bak)
+
+CONF.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+print(f"OK: synced inbound index={idx}; before={before}; kept={kept}; removed={removed}; added={added}; now={len([c for c in new_clients if c.get('id')])}")
+print(f"Backup: {bak}")
+
+def run(cmd):
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print(p.stdout)
+    return p.returncode
+
+rc = run([str(XRAY), "-test", "-config", str(CONF)])
+if rc != 0:
+    print("ERROR: xray -test failed; restoring backup", file=sys.stderr)
+    shutil.copy2(bak, CONF)
+    sys.exit(14)
+
+run(["systemctl", "restart", "xray"])
+rc = run(["systemctl", "status", "xray", "--no-pager", "-l"])
+if rc != 0:
+    sys.exit(15)
+PY
+
+# Run under sudo (no -E)
+ssh -tt "$SSH_USER@$HOST" "sudo env UUID_B64='$UUID_B64' python3 $REMOTE_PY; RC=\$?; rm -f $REMOTE_PY; exit \$RC"
+
+echo "✅ vpnapply завершён"

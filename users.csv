@@ -1,13 +1,14 @@
-user_id,group,priority,name,owner,phone,phone_type,app,status,notes,created_at
-user-002,staff,high,TBD,Transconvey,TBD,TBD,shadowrocket,active,,2026-02-02
-user-003,friends,normal,TBD,personal,TBD,TBD,v2raytun,active,,2026-02-02
-user-004,staff,high,Иван Петров,Transconvey,986734983729458,iOS,shadowrocket,disabled,,2026-02-02
-user-005,staff,high,Иван Петров,Transconvey,987987,iOS,v2raytun,disabled,,2026-02-02
-user-006,staff,high,иван,Transconvey,+79037777777,Android,werrewq,active,,2026-02-02
-user-007,friends,normal,Найко Алексардр,personal,+79037659182,iOS,v2raytun,active,,2026-02-02
-user-008,friends,normal,Вадим Волонга,personal,+79219500266,iOS,v2raytun,active,,2026-02-02
-user-009,friends,normal,Белов Витя,personal,+79219657086,iOS,v2raytun,active,,2026-02-02
-user-010,friends,normal,Белова Катя,personal,+79119243466,iOS,v2raytun,active,,2026-02-02
-user-011,staff,high,Собакин Иван,Transconvey,+79067523329,iOS,v2raytun,active,,2026-02-02
-user-012,staff,high,Serg,Transconvey,9875987698,iOS,v2raytun,active,,2026-02-02
-user-013,staff,high,GS,Transconvey,+79037664556,iOS,v2raytun,active,,2026-02-02
+id,name,status
+001,Твой телефон,active
+011,Собакин Иван,active
+012,Тест 012,active
+013,Твой новый,active
+002,legacy-002,disabled
+003,legacy-003,disabled
+004,legacy-004,disabled
+005,legacy-005,disabled
+006,legacy-006,disabled
+007,legacy-007,disabled
+008,legacy-008,disabled
+009,legacy-009,disabled
+010,legacy-010,disabled
