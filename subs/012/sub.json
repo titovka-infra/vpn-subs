@@ -1,16 +1,24 @@
 {
-  "remarks": "Transconvey VPN — user-012 (EDGE-1)",
-  "log": { "loglevel": "info" },
+  "remarks": "Transconvey VPN — user-012 — Тест 012 (edge1.titovka.com)",
+  "log": {
+    "loglevel": "info"
+  },
   "inbounds": [
     {
       "port": 1080,
       "listen": "[::1]",
       "tag": "socks",
       "protocol": "socks",
-      "settings": { "udp": true },
+      "settings": {
+        "udp": true
+      },
       "sniffing": {
         "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
         "routeOnly": false
       }
     }
@@ -38,7 +46,9 @@
         "network": "tcp",
         "security": "reality",
         "tcpSettings": {
-          "header": { "type": "none" }
+          "header": {
+            "type": "none"
+          }
         },
         "realitySettings": {
           "serverName": "www.cloudflare.com",
@@ -49,8 +59,20 @@
         }
       }
     },
-    { "tag": "direct", "protocol": "freedom", "settings": {} },
-    { "tag": "block", "protocol": "blackhole", "settings": { "response": { "type": "none" } } }
-  ]
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {
+        "response": {
+          "type": "none"
+        }
+      }
+    }
+  ],
+  "name": "Transconvey VPN — user-012 — Тест 012 (edge1.titovka.com)"
 }
-

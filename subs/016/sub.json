@@ -1,5 +1,5 @@
 {
-  "remarks": "Transconvey VPN — user-001 (EDGE-1)",
+  "remarks": "Transconvey VPN — user-016 — еще и еще (edge1.titovka.com)",
   "log": {
     "loglevel": "info"
   },
@@ -73,5 +73,6 @@
         }
       }
     }
-  ]
+  ],
+  "name": "Transconvey VPN — user-016 — еще и еще (edge1.titovka.com)"
 }
